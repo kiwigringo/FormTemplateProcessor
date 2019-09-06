@@ -3,16 +3,16 @@
 /**
  * Module to let you use templates as web contact forms.
  *
- * Can send you email and/or save the submission to a page in your site. 
+ * Can send you email and/or save the submission to a page in your site.
  *
  * Usage:
  *
  * 1. In admin, create the fields you want to be part of the form.
  * 2. Create a new template and assign your fields to this template.
  * 3. Create another template for your contact form page (if you don't already have one).
- * 4. Use the example below as a starting point for this contact form page: 
+ * 4. Use the example below as a starting point for this contact form page:
  *
- * $form = $modules->get('FormTemplateProcessor'); 
+ * $form = $modules->get('FormTemplateProcessor');
  * $form->template = $templates->get('my_contact_form_template'); // required
  * $form->requiredFields = array('fullname', 'email');
  * $form->email = 'your@email.com'; // optional, sends form as email
@@ -22,234 +22,281 @@
  * 5. Use CSS to style the fields. See the bottom of this file for suggestions.
  *
  */
+
+namespace processwire;
+
 class FormTemplateProcessor extends WireData implements Module {
 
-        /**
-         * Return an array of module information
-         *
-         * @return array
-         *
-         */
-        public static function getModuleInfo() {
-		return array(
-			'title' => 'Form Template Processor', 
-			'version' => 101, 
-			'summary' => 'Lets you use template fields as web contact forms. Can send forms as emails or save as pages.',
-			'singular' => false,
-			'autoload' => false,
-			);
-	}
+    /**
+     * Return an array of module information
+     *
+     * @return array
+     *
+     */
+    public static function getModuleInfo() {
+        return array(
+            'title' => 'Form Template Processor',
+            'version' => 101,
+            'summary' => 'Extended version of Ryan Cramers Form Template Processor Lets you use template fields as web contact forms. Can send forms as emails or save as pages.',
+            'singular' => false,
+            'autoload' => false,
+            'author' => 'Christopher Cookson',
+            'requires' => array('MarkupGoogleRecaptcha>=2.0.0', 'ProcessWire>=3.0.0')
+        );
+    }
 
-	/**
-	 * Instance of InputfieldForm that we use to hold our form fields.
-	 *
-	 */
-	protected $form;
+    /**
+     * Instance of InputfieldForm that we use to hold our form fields.
+     *
+     */
+    protected $form;
 
-	/**
-	 * Instance of Page, that we use to hold our submitted contact info. 
-	 *
-	 */
-	protected $contact; 
+    /**
+     * Instance of Page, that we use to hold our submitted contact info.
+     *
+     */
+    protected $contact;
 
-	/**
-	 * Initialize a new web contact form
-	 *
-	 * @param Template $template Template object holding the form's fields.
-	 *
-	 */
-	public function init() {
+    /**
+     * Initialize a new web contact form
+     *
+     * @param Template $template Template object holding the form's fields.
+     *
+     */
+    public function init() {
 
-		// create a page for holding our form fields
-		$this->contact = new Page();
+        // create a page for holding our form fields
+        $this->contact = new Page();
 
-		// Template to use for the contact form fields (required).
-		// must be a Template object, it will be assigned to $this->contact.
-		$this->set('template', null);
+        //Provide a Recaptcha
+        $this->captcha = $this->modules->get('MarkupGoogleRecaptcha');
 
-	 	// Optional E-Mail address that form will get submitted to
-		$this->set('email', '');
+        // Template to use for the contact form fields (required).
+        // must be a Template object, it will be assigned to $this->contact.
+        $this->set('template', null);
 
-		// Array of field names that are required to complete the submission
-		// if not specified, it will use the admin field settings.
-		// I recommend that you make at least one field required, since this 
-		// isn't an admin setting yet.
-		$this->set('requiredFields', array());
+        // Optional E-Mail address that form will get submitted to
+        $this->set('email', '');
 
-	 	// Array of field names that should be skipped when drawing the form
-		$this->set('skipFields', array('title'));
+        // Array of field names that are required to complete the submission
+        // if not specified, it will use the admin field settings.
+        // I recommend that you make at least one field required, since this
+        // isn't an admin setting yet.
+        $this->set('requiredFields', array());
 
-		// Subject of the email that gets sent 
-		$this->set('emailSubject', 'Web Contact Form Submission'); 
+        // Array of field names that should be skipped when drawing the form
+        $this->set('skipFields', array('title'));
 
-		// Optional parent page for the contact.
-		// If ommited, the page will not be saved to the DB.
-		$this->set('parent', null);
+        // Subject of the email that gets sent
+        $this->set('emailSubject', 'Web Contact Form Submission');
+
+        // Optional parent page for the contact.
+        // If ommited, the page will not be saved to the DB.
+        $this->set('parent', null);
 
 
-		// message output upon successful completion of the form
-		$this->set('successMessage', '<h2>Thank you, your submission has been sent.</h2>'); 
+        // message output upon successful completion of the form
+        $this->set('successMessage', '<h2>Thank you, your message has been sent.</h2>');
 
-		// date format used for the title's of newly created contact pages
-		$this->set('dateFormat', 'F j, Y, g:i a'); 
+        // date format used for the title's of newly created contact pages
+        $this->set('dateFormat', 'F j, Y, g:i a');
+    }
 
-	}
+    /**
+     * Intercept when some properties are set so that we can us them
+     *
+     */
+    public function set($key, $value) {
+        if ($key == 'parent' && $value) {
+            if (!$value instanceof Page)
+                throw new WireException('Parent must be a Page object');
+            $this->contact->parent = $value;
+        } else if ($key == 'template' && $value) {
+            if (!$value instanceof Template)
+                throw new WireException('Template must be a Template object');
+            $this->contact->template = $value;
+        }
+        return parent::set($key, $value);
+    }
 
-	/**
-	 * Intercept when some properties are set so that we can us them
-	 *
-	 */
-	public function set($key, $value) {
-		if($key == 'parent' && $value) {
-			if(!$value instanceof Page) throw new WireException('Parent must be a Page object');
-			$this->contact->parent = $value;
+    /**
+     * Build the web contact form and add fields to it
+     *
+     */
+    protected function ___buildForm() {
 
-		} else if($key == 'template' && $value) {
-			if(!$value instanceof Template) throw new WireException('Template must be a Template object');
-			$this->contact->template = $value;
-		}
-		return parent::set($key, $value);
-	}
+        // create the contact form
+        $form = $this->modules->get("InputfieldForm");
+        $form->method = 'post';
+        $form->action = './';
 
-	/**
-	 * Build the web contact form and add fields to it
-	 *
-	 */
-	protected function ___buildForm() {
+        // get the collection of inputs that can populate this page's fields
+        $inputfields = $this->contact->getInputfields();
 
-		// create the contact form
-		$form = $this->modules->get("InputfieldForm");
-		$form->method = 'post';
-		$form->action = './';
+        // make all the fields required and add them to the form
+        foreach ($inputfields as $inputfield) {
+            if (in_array($inputfield->name, $this->skipFields))
+                continue;
+            if (in_array($inputfield->name, $this->requiredFields))
+                $inputfield->required = true;
+            if ($inputfield instanceof ProcessWire\FieldtypeDatetime) {
+                $inputfield->dateInputFormat = "d-m-Y";
+                $inputfield->timeInputFormat = "H:i";
+                $inputfield->datepicker = 3;
+                $url = $this->config->urls->get('InputfieldDatetime');
 
-		// get the collection of inputs that can populate this page's fields
-		$inputfields = $this->contact->getInputfields();
+//                $this->config->scripts->add($url . 'InputfieldDatetime.js');
+//                $this->config->scripts->add($url . 'timepicker/jquery-ui-timepicker-addon.min.js');
+//                $this->config->styles->add('/wire/templates-admin/styles/JqueryUI/﻿JqueryUI.css');
+//                $this->config->styles->add($url . 'timepicker/jquery-ui-timepicker-addon.min.css');
+//                $this->config->styles->add($url . 'InputfieldDatetime.css');
+//                $url = $this->config->urls->get('JqueryUI');
+//                $this->config->scripts->add($url . 'JqueryUI/JqueryUI.js');
+            }
+            $form->add($inputfield);
+        }
 
-		// make all the fields required and add them to the form
-		foreach($inputfields as $inputfield) {
-			if(in_array($inputfield->name, $this->skipFields)) continue; 
-			if(in_array($inputfield->name, $this->requiredFields)) $inputfield->required = true; 
-			$form->add($inputfield);
-		}
+        //add Captcha code
+        $this->captcha->render($form);
 
-		// the inputfields don't already have a submit button, so we'll add one.
-		$submit = $this->modules->get("InputfieldSubmit");
+        // the inputfields don't already have a submit button, so we'll add one.
+        $submit = $this->modules->get("InputfieldSubmit");
 
-		// set a random name to the submit button so that this form doesn't process 
-		// any submissions without first receiving a rendered form. This isn't 
-		// necessary, but it may help to reduce automated spam to the form.
-		$submit->name = "submit";
-		$submit->value = 'Submit';
+        // set a random name to the submit button so that this form doesn't process
+        // any submissions without first receiving a rendered form. This isn't
+        // necessary, but it may help to reduce automated spam to the form.
+        $submit->name = "submit";
+        $submit->value = 'Send Message';
 
-		// add the submit button the the form
-		$form->add($submit);
+        // add the submit button the the form
+        $form->add($submit);
 
-		return $form;
-	}
+        return $form;
+    }
 
-	/**
-	 * Send an email with the results of the processed form
-	 *
-	 */
-	protected function ___sendEmail($form) {
+    /**
+     * Send an email with the results of the processed form
+     *
+     */
+    protected function ___sendEmail($form) {
 
-		$message = '';
-		$fromEmail = '';
+        $message = '';
+        $fromEmail = '';
 
-		foreach($this->contact->fields as $field) {
+        foreach ($this->contact->fields as $field) {
 
-			if(in_array($field->name, $this->skipFields)) continue; 
+            if (in_array($field->name, $this->skipFields))
+                continue;
 
-			$label = $field->label;
-			$value = htmlentities($this->contact->get($field->name));
+            $label = $field->label;
+            if ($field->type instanceof \ProcessWire\FieldtypeDatetime) {
+                $value = htmlentities(date('d/m/Y G:i', $this->contact->get($field->name)));
+            } elseif ($field->type instanceof \ProcessWire\FieldtypeOptions) {
+                $options = $this->contact->get($field->name);
+                $value = '';
+                foreach ($options as $option) {
+                    $value .= "* " . htmlentities($option->title);
+                }
+            } elseif ($field->type instanceof \ProcessWire\FieldtypeCheckbox) {
+                if ($this->contact->get($field->name)) {
+                    $value = "Yes";
+                } else {
+                    $value = "No";
+                }
+            } else {
+                $value = htmlentities($this->contact->get($field->name));
+            }
 
-			$message .= "<h2>$label</h2><p>$value</p>";
+            $message .= "<h2>$label</h2><p>$value</p>";
 
-			// use the first found FieldtypeEmail as the 'From' email
-			if(!$fromEmail && $field->type instanceof FieldtypeEmail) {
-				$fromEmail = $value;
-			}
-		}
+            // use the first found FieldtypeEmail as the 'From' email
+            if (!$fromEmail && $field->type instanceof FieldtypeEmail) {
+                $fromEmail = $value;
+            }
+        }
 
-		$message = "<html><head></head><body>$message</body></html>";
-		$headers = "Content-Type: text/html;";
+        $message = "<html><head></head><body>$message</body></html>";
+        $headers = "MIME-Version: 1.0\nContent-Type: text/html; charset=utf-8";
 
-		if($fromEmail) $headers = "From: $fromEmail\n$headers";
+        if ($fromEmail)
+            $headers = "From: $fromEmail\n$headers";
 
-		// send the email		
-		mail($this->email, $this->emailSubject, $message, $headers); 
-	}
+        // send the email
+        mail($this->email, $this->emailSubject, $message, $headers);
+    }
 
-	/**
-	 * Create a new page with the results of the processed form
-	 *
-	 */
-	protected function ___savePage($form) {
+    /**
+     * Create a new page with the results of the processed form
+     *
+     */
+    protected function ___savePage($form) {
 
-		if(!$this->contact->parent) return; 
+        if (!$this->contact->parent)
+            return;
 
-		$this->contact->name = date('y-m-d-H-i-s-u');
+        $this->contact->name = date('y-m-d-H-i-s-u');
 
-		if(in_array('title', $this->skipFields)) {
-			$this->contact->title = date($this->dateFormat);
-		}
+        if (in_array('title', $this->skipFields)) {
+            $this->contact->title = date($this->dateFormat);
+        }
 
-		if(ProcessWire::versionMajor == 2 && ProcessWire::versionMinor == 0) {
-			$this->contact->status = Page::statusHidden;
-			$this->contact->removeRole('guest');
-		} else {
-			// PW 2.1 and above
-			$this->contact->status = Page::statusUnpublished; 
-		}
+        if (ProcessWire::versionMajor == 2 && ProcessWire::versionMinor == 0) {
+            $this->contact->status = Page::statusHidden;
+            $this->contact->removeRole('guest');
+        } else {
+            // PW 2.1 and above
+            $this->contact->status = Page::statusUnpublished;
+        }
 
-		$this->contact->save();
-	}
-	
+        $this->contact->save();
+    }
 
-	/**
-	 * Render a form or process it's input
-	 *
-	 * @return string Output of the form or success message upon completion.
-	 *
-	 */
-	public function ___render() {
+    /**
+     * Render a form or process it's input
+     *
+     * @return string Output of the form or success message upon completion.
+     *
+     */
+    public function ___render() {
 
-		if(!$this->contact->template) throw new WireException("You must specify a Template");
+        if (!$this->contact->template)
+            throw new WireException("You must specify a Template");
 
-		$form = $this->buildForm();
+        $form = $this->buildForm();
 
-		// if the form hasn't been submitted, then just return the rendered form.
-		if(!$this->input->post->submit) return $form->render();
+        // if the form hasn't been submitted, then just return the rendered form.
+        if (!$this->input->post->submit)
+            return $form->render();
 
-		// variable to hold our output, which we will return
-		$out = ''; 
-	
-		// now we assume the form has been submitted.
-		// tell the form to process input frmo the post vars.
-		$form->processInput($this->input->post);
+        // variable to hold our output, which we will return
+        $out = '';
 
-		// see if any errors occurred
-		if(count($form->getErrors())) {
-			// re-render the form, it will include the error messages
-			$out .= $form->render();	
+        // now we assume the form has been submitted.
+        // tell the form to process input frmo the post vars.
+        $form->processInput($this->input->post);
 
-		} else {
-			// successful form submission, so populate the new page with the new values.
-			foreach($form as $field) {
-				$this->contact->set($field->name, $field->value); 
-			}
+        // see if any errors occurred
+        if (count($form->getErrors()) || $this->captcha->verifyResponse() !== true) {
+            // re-render the form, it will include the error messages
+            $out .= $form->render();
+        } else {
+            // successful form submission, so populate the new page with the new values.
+            foreach ($form as $field) {
+                $this->contact->set($field->name, $field->value);
+            }
 
-			if($this->email) $this->sendEmail($form);
-			if($this->parent) $this->savePage($form);
+            if ($this->email)
+                $this->sendEmail($form);
+            if ($this->parent)
+                $this->savePage($form);
 
-			$out .= $this->successMessage;
-		
-		}
+            $out .= $this->successMessage;
+        }
 
-		return $out;
-	}
+        return $out;
+    }
+
 }
-
 
 /**
  * Suggested styles to get started for styling the fields created by this module:
@@ -289,7 +336,3 @@ class FormTemplateProcessor extends WireData implements Module {
 }
 
  */
-
-
-
-
